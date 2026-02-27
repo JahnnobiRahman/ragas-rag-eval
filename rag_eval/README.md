@@ -1,94 +1,226 @@
-# RAG Evaluation
+## Retrieval-Augmented Generation System with Structured Evaluation (Ragas 0.3)
 
-Evaluate a RAG (Retrieval Augmented Generation) system with custom metrics
+A system-level implementation of Retrieval-Augmented Generation (RAG) with **experiment-driven evaluation** using **Ragas 0.3**.
 
-## Quick Start
+This repository demonstrates how modern AI systems should be built: **observable, measurable, and architecturally transparent**.
 
-### 1. Set Your API Key
+## Overview
 
-Choose your LLM provider:
+This project implements a minimal RAG pipeline from scratch and integrates it with the Ragas experimentation framework.
 
-```bash
-# OpenAI (default)
-export OPENAI_API_KEY="your-openai-key"
+The purpose is to:
 
-# Or use Anthropic Claude
-export ANTHROPIC_API_KEY="your-anthropic-key"
+- **Build** a transparent retrieval + generation architecture
+- **Introduce** structured observability at each system stage
+- **Integrate** reproducible evaluation workflows
+- **Diagnose** failure modes systematically
+- **Benchmark** architectural improvements using controlled experiments
 
-# Or use Google Gemini
-export GOOGLE_API_KEY="your-google-key"
+This is not a prompt demo. It is a system engineering + evaluation demonstration.
+
+## System architecture
+
+### Retrieval layer (current)
+
+- **Document store**: in-memory list of documents (see `rag.py`)
+- **Retriever**: keyword overlap scoring
+- **Ranking**: deterministic top-\(k\)
+
+Scoring logic:
+
+\[
+score = |\text{query\_words} \cap \text{document\_words}|
+\]
+
+Design goals:
+
+- Full transparency
+- Deterministic behavior
+- Debuggable failure modes
+- No hidden embedding abstractions
+
+Planned extension:
+
+- Embedding-based retrieval (FAISS / Chroma)
+- Cosine similarity
+- Retrieval precision/recall benchmarking
+
+### Generation layer (current)
+
+- **Model**: OpenAI `gpt-4o` (see `rag.py` and `evals.py`)
+- **Prompting**: explicit context injection with a structured template
+- **Context assembly**: controlled top-\(k\) docs
+- **LLM metadata**: prompt/context lengths and token usage logged in traces
+
+Prompt template (conceptually):
+
+```
+Answer the following question based on the provided documents:
+Question: {query}
+Documents:
+{context}
+Answer:
 ```
 
-### 2. Install Dependencies
+### Observability layer (current)
 
-Using `uv` (recommended):
+Each query execution produces a structured trace capturing:
+
+- Retrieval start/completion
+- Similarity scores + retrieved doc IDs
+- Prompt/context length
+- Model metadata + token usage (when available)
+- Error events
+
+Traces are stored under `evals/logs/` as JSON.
+
+## Evaluation framework (Ragas 0.3)
+
+Evaluation is treated as a first-class system component.
+
+### Dataset + experiment pipeline
+
+The evaluation workflow (`evals.py`) uses:
+
+- `ragas.Dataset` (backed by local CSV storage under `evals/`)
+- `@experiment()` runs that call the RAG client and score outputs
+- A discrete metric (`DiscreteMetric`) producing **pass/fail** based on grading notes
+
+Output format (conceptually):
+
+`question | grading_notes | response | score | log_file`
+
+Experiment artifacts are stored under `evals/experiments/` (CSV).
+
+### Failure mode taxonomy
+
+The system distinguishes three failure categories:
+
+- **Coverage failure**: required knowledge does not exist in the document store
+- **Retrieval failure**: knowledge exists but is not retrieved
+- **Generation failure**: correct context is retrieved but reasoning fails
+
+Because each run logs retrieval scores + the full trace, you can isolate which class of failure occurred.
+
+## Quickstart
+
+### Requirements
+
+- Python **3.9+**
+- An OpenAI API key
+
+### 1) Create and activate a virtual environment
+
+From the `rag_eval/` directory:
 
 ```bash
-uv sync
+python3 -m venv venv
+source venv/bin/activate
 ```
 
-Or using `pip`:
+### 2) Install dependencies
 
 ```bash
+pip install -U pip
 pip install -e .
 ```
 
-### 3. Run the Evaluation
-
-Using `uv`:
+### 3) Set your API key
 
 ```bash
-uv run python evals.py
+export OPENAI_API_KEY="your-openai-key"
 ```
 
-Or using `pip`:
+### 4) Run the evaluation experiment
 
 ```bash
 python evals.py
 ```
 
-## Project Structure
+You should see:
+
+- Trace JSON files written to `evals/logs/`
+- An experiment CSV written under `evals/experiments/`
+
+## Working with datasets
+
+### Local dataset storage
+
+`evals.py` uses a local CSV-backed Ragas dataset under `evals/datasets/`. You can:
+
+- Edit `load_dataset()` in `evals.py` to add/modify questions and grading notes
+- Or edit the CSV directly if you prefer file-driven iteration
+
+### Optional: fetch Ragas docs for local grounding
+
+There’s a helper script at `evals/datasets/fetch_docs.py` that downloads a few Ragas documentation pages into:
+
+- `evals/datasets/ragas_docs/`
+
+Run it from the project root:
+
+```bash
+python evals/datasets/fetch_docs.py
+```
+
+## Project structure
 
 ```
 rag_eval/
-├── README.md           # This file
-├── pyproject.toml      # Project configuration
-├── rag.py              # Your RAG application code
-├── evals.py            # Evaluation workflow
-├── __init__.py         # Makes this a Python package
-└── evals/              # Evaluation-related data
-    ├── datasets/       # Test datasets
-    ├── experiments/    # Experiment results
-    └── logs/           # Evaluation logs and traces
+├── README.md
+├── pyproject.toml
+├── rag.py
+├── evals.py
+├── __init__.py
+└── evals/
+    ├── datasets/
+    │   ├── fetch_docs.py
+    │   └── test_dataset.csv
+    ├── experiments/
+    └── logs/
 ```
 
-## Customization
+## Engineering insight from initial experiments
 
-### Modify the LLM Provider
+Early experiment runs can surface systematic failures that look like “LLM mistakes” but are actually system issues. A common pattern:
 
-In `evals.py`, update the LLM configuration:
+- The evaluation dataset references knowledge not present in the knowledge base.
+- The retriever returns no relevant documents (correct behavior).
+- The model reports insufficient context.
+- The metric scores the response as a failure.
 
-```python
-from ragas.llms import llm_factory
+Conclusion: this is a **knowledge base coverage mismatch**, not hallucination, retrieval error, or generation instability.
 
-# Use Anthropic Claude
-llm = llm_factory("claude-3-5-sonnet-20241022", provider="anthropic")
+## Roadmap
 
-# Use Google Gemini
-llm = llm_factory("gemini-1.5-pro", provider="google")
+### Phase 1 — Knowledge base expansion
 
-# Use local Ollama
-llm = llm_factory("mistral", provider="ollama", base_url="http://localhost:11434")
-```
+- Ingest structured documentation
+- Paragraph-level chunking
+- Better context granularity
 
-### Customize Test Cases
+### Phase 2 — Embedding retrieval
 
-Edit the `load_dataset()` function in `evals.py` to add or modify test cases.
+- Replace keyword scoring
+- Introduce semantic similarity
+- Benchmark retrieval improvements using Ragas metrics
 
-### Change Evaluation Metrics
+### Phase 3 — Advanced evaluation
 
-Update the `my_metric` definition in `evals.py` to use different grading criteria.
+- Multi-metric scoring
+- Retrieval relevance scoring
+- Regression benchmarking across architecture versions
+- Agent workflow evaluation
 
-## Documentation
+## Design principles
 
-Visit https://docs.ragas.io for more information.
+- Observability before optimization
+- Evaluation before scaling
+- Diagnosis before prompt tuning
+- Architecture before abstraction
+- Reproducibility over heuristics
+
+## Notes
+
+- **Do not commit secrets**: keep API keys in environment variables (or a local `.env` that is gitignored).
+- **Docs**: see Ragas documentation at `https://docs.ragas.io`.
