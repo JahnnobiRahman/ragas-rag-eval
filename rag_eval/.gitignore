@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# OS
+.DS_Store
+
+# Ragas outputs
+evals/logs/
+evals/experiments/
+
+# Local datasets (optional—see note)
+evals/datasets/ragas_docs/
